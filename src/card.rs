@@ -1,5 +1,5 @@
 use rand::Rng;
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{Display, EnumCount, EnumIter};
 
@@ -50,14 +50,78 @@ impl Deck {
     }
 }
 
+#[derive(Clone)]
 pub struct Card {
     pub suit: Suit,
     pub rank: Rank,
 }
 
+impl Card {
+    pub fn value(&self) -> u8 {
+        match self.rank {
+            Rank::Ace => 1,
+            Rank::Two => 2,
+            Rank::Three => 3,
+            Rank::Four => 4,
+            Rank::Five => 5,
+            Rank::Six => 6,
+            Rank::Seven => 7,
+            Rank::Eight => 8,
+            Rank::Nine => 9,
+            Rank::Ten => 10,
+            Rank::Jack => 10,
+            Rank::Queen => 10,
+            Rank::King => 10,
+        }
+    }
+
+    pub fn order(&self) -> u8 {
+        match self.rank {
+            Rank::Ace => 1,
+            Rank::Two => 2,
+            Rank::Three => 3,
+            Rank::Four => 4,
+            Rank::Five => 5,
+            Rank::Six => 6,
+            Rank::Seven => 7,
+            Rank::Eight => 8,
+            Rank::Nine => 9,
+            Rank::Ten => 10,
+            Rank::Jack => 11,
+            Rank::Queen => 12,
+            Rank::King => 13,
+        }
+    }
+}
+
 impl fmt::Display for Card {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.rank, self.suit)
+    }
+}
+
+impl PartialEq for Card {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
+    }
+}
+
+impl PartialOrd for Card {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.value() > other.value() {
+            return Some(Ordering::Greater);
+        } else if self.value() < other.value() {
+            return Some(Ordering::Less);
+        }
+        Some(Ordering::Equal)
+    }
+}
+
+impl Eq for Card {}
+
+impl Ord for Card {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 

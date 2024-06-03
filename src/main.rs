@@ -1,4 +1,5 @@
 mod card;
+mod score_hand;
 
 use card::Deck;
 
