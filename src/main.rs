@@ -3,15 +3,15 @@ mod card;
 use card::Deck;
 
 fn main() {
-    let mut my_deck = Deck::new();
-    for card in my_deck.cards() {
+    let mut deck = Deck::new();
+
+    let hand = deck.draw_n(6).unwrap();
+    let other_hand = deck.draw_n(6).unwrap();
+
+    for card in hand.iter() {
         println!("{}", card);
     }
-
-    my_deck.shuffle();
-
-    println!("shuffling");
-    for card in my_deck.cards() {
+    for card in other_hand.iter() {
         println!("{}", card);
     }
 }
