@@ -1,18 +1,15 @@
 use crate::card::{Card, Rank};
+use itertools::Itertools;
 
 pub fn score_hand(hand: &[Card], starter: &Card) -> u8 {
-    let mut cards = Vec::with_capacity(hand.len() + 1);
-    cards.extend_from_slice(hand);
-    cards.push(*starter);
-
-    let quads = generate_quads(&cards);
-    let trips = generate_trips(&cards);
-    let pairs = generate_pairs(&cards);
+    let mut cards = hand.to_owned();
+    cards.push(starter.to_owned());
+    cards.sort_by(|a, b| a.run_cmp(b));
 
     let mut score = 0;
 
-    score += count_fifteens(&cards, &quads, &trips, &pairs);
-    score += count_pairs(&pairs);
+    score += count_fifteens(&cards);
+    score += count_pairs(&cards);
     score += count_runs(&cards);
     score += count_flush(&hand, &starter);
     score += count_nobs(&hand, &starter);
@@ -20,82 +17,53 @@ pub fn score_hand(hand: &[Card], starter: &Card) -> u8 {
     score
 }
 
-fn generate_pairs(cards: &[Card]) -> Vec<[Card; 2]> {
-    let n = cards.len();
-    let mut pairs = Vec::with_capacity(n * (n - 1) / 2);
-    for i in 0..n {
-        for j in i + 1..n {
-            pairs.push([cards[i], cards[j]]);
-        }
-    }
-    pairs
-}
+fn count_fifteens(cards: &[Card]) -> u8 {
+    let card_combinations = (2..=5)
+        .map(|size| cards.iter().combinations(size))
+        .into_iter()
+        .flatten();
 
-fn count_fifteens(
-    cards: &[Card],
-    quads: &[[Card; 4]],
-    trips: &[[Card; 3]],
-    pairs: &[[Card; 2]],
-) -> u8 {
-    let mut score: u8 = 0;
+    let counts =
+        card_combinations.map(|cards| cards.iter().map(|card| card.count_value()).sum::<u8>());
 
-    let sum: u8 = cards.iter().map(|card| card.count_value()).sum();
-    if sum == 15 {
-        score += 2;
-    }
-
-    for quad in quads.iter() {
-        let sum: u8 = quad.iter().map(|card| card.count_value()).sum();
-        if sum == 15 {
-            score += 2;
-        }
-    }
-
-    for trip in trips.iter() {
-        let sum: u8 = trip.iter().map(|card| card.count_value()).sum();
-        if sum == 15 {
-            score += 2;
-        }
-    }
-
-    for pair in pairs.iter() {
-        let sum: u8 = pair.iter().map(|card| card.count_value()).sum();
-        if sum == 15 {
-            score += 2;
-        }
-    }
-
+    let score = counts.map(|count| if count == 15 { 2 } else { 0 }).sum();
     score
 }
 
-fn count_pairs(pairs: &[[Card; 2]]) -> u8 {
-    let mut score = 0;
-    for [a, b] in pairs {
-        if a.rank_eq(b) {
-            score += 2;
-        }
-    }
+fn count_pairs(cards: &[Card]) -> u8 {
+    let card_combinations = cards.iter().combinations(2);
+
+    let score = card_combinations
+        .map(|cards| if cards[0].rank_eq(cards[1]) { 2 } else { 0 })
+        .sum();
     score
 }
 
+/// Assumes `cards` are already sorted
 fn count_runs(cards: &[Card]) -> u8 {
-    let mut score = 0;
-
-    score += count_run(cards);
+    let score = cards
+        .iter()
+        .combinations(5)
+        .map(|cards| count_run(&cards))
+        .sum();
     if score != 0 {
         return score;
     }
 
-    for quad in generate_quads(cards) {
-        score += count_run(&quad);
-    }
+    let score = cards
+        .iter()
+        .combinations(4)
+        .map(|cards| count_run(&cards))
+        .sum();
     if score != 0 {
         return score;
     }
 
-    for trip in generate_trips(cards) {
-        score += count_run(&trip);
-    }
+    let score = cards
+        .iter()
+        .combinations(3)
+        .map(|cards| count_run(&cards))
+        .sum();
     score
 }
 
@@ -103,9 +71,9 @@ fn count_flush(hand: &[Card], starter: &Card) -> u8 {
     let suit = hand[0].suit();
     if hand[1..].iter().all(|card| card.suit() == suit) {
         if starter.suit() == suit {
-            return hand.len() as u8 + 1;
+            return 5;
         }
-        return hand.len() as u8;
+        return 4;
     }
     0
 }
@@ -119,44 +87,14 @@ fn count_nobs(hand: &[Card], starter: &Card) -> u8 {
     0
 }
 
-fn count_run(cards: &[Card]) -> u8 {
-    let mut cards = cards.to_owned();
-    cards.sort_by(|a, b| a.run_cmp(b));
-    let lowest = cards[0].run_order();
+fn count_run(cards: &[&Card]) -> u8 {
+    let start = cards[0].run_order();
     for i in 1..cards.len() {
-        if cards[i].run_order() != (lowest + i as u8) {
+        if cards[i].run_order() != (start + i as u8) {
             return 0;
         }
     }
     return cards.len() as u8;
-}
-
-fn generate_trips(cards: &[Card]) -> Vec<[Card; 3]> {
-    let n = cards.len();
-    let mut trips = Vec::with_capacity(n * (n - 1) * (n - 2) / 6);
-    for i in 0..n {
-        for j in i + 1..n {
-            for k in j + 1..n {
-                trips.push([cards[i], cards[j], cards[k]]);
-            }
-        }
-    }
-    trips
-}
-
-fn generate_quads(cards: &[Card]) -> Vec<([Card; 4])> {
-    let n = cards.len();
-    let mut quads = Vec::with_capacity(n * (n - 1) * (n - 2) * (n - 3) / 24);
-    for i in 0..n {
-        for j in i + 1..n {
-            for k in j + 1..n {
-                for l in k + 1..n {
-                    quads.push([cards[i], cards[j], cards[k], cards[l]]);
-                }
-            }
-        }
-    }
-    quads
 }
 
 #[cfg(test)]

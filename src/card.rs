@@ -69,6 +69,7 @@ impl Card {
         self.rank
     }
 
+    /// The value used when counting during the play or fifteens during the show
     pub fn count_value(&self) -> u8 {
         match self.rank {
             Rank::Ace => 1,
@@ -87,6 +88,7 @@ impl Card {
         }
     }
 
+    /// The order of a card when sorted for a run
     pub fn run_order(&self) -> u8 {
         match self.rank {
             Rank::Ace => 0,
