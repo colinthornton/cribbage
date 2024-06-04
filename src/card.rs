@@ -1,5 +1,5 @@
 use rand::Rng;
-use std::{cmp::Ordering, fmt};
+use std::{cmp, fmt};
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{Display, EnumCount, EnumIter};
 
@@ -12,7 +12,7 @@ impl Deck {
         let mut cards = Vec::with_capacity(Suit::COUNT * Rank::COUNT);
         for suit in Suit::iter() {
             for rank in Rank::iter() {
-                cards.push(Card { suit, rank });
+                cards.push(Card::new(suit, rank));
             }
         }
         let mut deck = Deck { cards };
@@ -52,11 +52,23 @@ impl Deck {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Card {
-    pub suit: Suit,
-    pub rank: Rank,
+    suit: Suit,
+    rank: Rank,
 }
 
 impl Card {
+    pub fn new(suit: Suit, rank: Rank) -> Self {
+        Card { suit, rank }
+    }
+
+    pub fn suit(&self) -> Suit {
+        self.suit
+    }
+
+    pub fn rank(&self) -> Rank {
+        self.rank
+    }
+
     pub fn count_value(&self) -> u8 {
         match self.rank {
             Rank::Ace => 1,
@@ -77,51 +89,43 @@ impl Card {
 
     pub fn run_order(&self) -> u8 {
         match self.rank {
-            Rank::Ace => 1,
-            Rank::Two => 2,
-            Rank::Three => 3,
-            Rank::Four => 4,
-            Rank::Five => 5,
-            Rank::Six => 6,
-            Rank::Seven => 7,
-            Rank::Eight => 8,
-            Rank::Nine => 9,
-            Rank::Ten => 10,
-            Rank::Jack => 11,
-            Rank::Queen => 12,
-            Rank::King => 13,
+            Rank::Ace => 0,
+            Rank::Two => 1,
+            Rank::Three => 2,
+            Rank::Four => 3,
+            Rank::Five => 4,
+            Rank::Six => 5,
+            Rank::Seven => 6,
+            Rank::Eight => 7,
+            Rank::Nine => 8,
+            Rank::Ten => 9,
+            Rank::Jack => 10,
+            Rank::Queen => 11,
+            Rank::King => 12,
         }
+    }
+
+    pub fn run_cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.run_order() > other.run_order() {
+            return cmp::Ordering::Greater;
+        } else if self.run_order() < other.run_order() {
+            return cmp::Ordering::Less;
+        }
+        cmp::Ordering::Equal
+    }
+
+    pub fn suit_eq(&self, other: &Self) -> bool {
+        self.suit == other.suit
+    }
+
+    pub fn rank_eq(&self, other: &Self) -> bool {
+        self.rank == other.rank
     }
 }
 
 impl fmt::Display for Card {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.rank, self.suit)
-    }
-}
-
-impl PartialEq for Card {
-    fn eq(&self, other: &Self) -> bool {
-        self.run_order() == other.run_order()
-    }
-}
-
-impl PartialOrd for Card {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.run_order() > other.run_order() {
-            return Some(Ordering::Greater);
-        } else if self.run_order() < other.run_order() {
-            return Some(Ordering::Less);
-        }
-        Some(Ordering::Equal)
-    }
-}
-
-impl Eq for Card {}
-
-impl Ord for Card {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
     }
 }
 
