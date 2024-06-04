@@ -115,52 +115,6 @@ impl Card {
         }
         cmp::Ordering::Equal
     }
-
-    pub fn suit_eq(&self, other: &Self) -> bool {
-        self.suit == other.suit
-    }
-
-    pub fn rank_eq(&self, other: &Self) -> bool {
-        self.rank == other.rank
-    }
-}
-
-impl Card {
-    pub fn value(&self) -> u8 {
-        match self.rank {
-            Rank::Ace => 1,
-            Rank::Two => 2,
-            Rank::Three => 3,
-            Rank::Four => 4,
-            Rank::Five => 5,
-            Rank::Six => 6,
-            Rank::Seven => 7,
-            Rank::Eight => 8,
-            Rank::Nine => 9,
-            Rank::Ten => 10,
-            Rank::Jack => 10,
-            Rank::Queen => 10,
-            Rank::King => 10,
-        }
-    }
-
-    pub fn order(&self) -> u8 {
-        match self.rank {
-            Rank::Ace => 1,
-            Rank::Two => 2,
-            Rank::Three => 3,
-            Rank::Four => 4,
-            Rank::Five => 5,
-            Rank::Six => 6,
-            Rank::Seven => 7,
-            Rank::Eight => 8,
-            Rank::Nine => 9,
-            Rank::Ten => 10,
-            Rank::Jack => 11,
-            Rank::Queen => 12,
-            Rank::King => 13,
-        }
-    }
 }
 
 impl fmt::Display for Card {

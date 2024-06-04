@@ -1,8 +1,9 @@
-mod card;
-mod score_hand;
-
 use card::Deck;
-use score_hand::score_hand;
+use the_show::score_the_show;
+
+mod card;
+mod the_play;
+mod the_show;
 
 fn main() {
     let mut deck = Deck::new();
@@ -13,6 +14,6 @@ fn main() {
     println!("hand: {:#?}", hand);
     println!("starter: {:#?}", starter);
 
-    let score = score_hand(&hand, &starter);
+    let score = score_the_show(&hand, &starter);
     println!("score: {}", score);
 }

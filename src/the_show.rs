@@ -1,7 +1,7 @@
 use crate::card::{Card, Rank};
 use itertools::Itertools;
 
-pub fn score_hand(hand: &[Card], starter: &Card) -> u8 {
+pub fn score_the_show(hand: &[Card], starter: &Card) -> u8 {
     let mut cards = hand.to_owned();
     cards.push(starter.to_owned());
     cards.sort_by(|a, b| a.run_cmp(b));
@@ -34,37 +34,30 @@ fn count_pairs(cards: &[Card]) -> u8 {
     let card_combinations = cards.iter().combinations(2);
 
     let score = card_combinations
-        .map(|cards| if cards[0].rank_eq(cards[1]) { 2 } else { 0 })
+        .map(|cards| {
+            if cards[0].rank() == cards[1].rank() {
+                2
+            } else {
+                0
+            }
+        })
         .sum();
     score
 }
 
 /// Assumes `cards` are already sorted
 fn count_runs(cards: &[Card]) -> u8 {
-    let score = cards
-        .iter()
-        .combinations(5)
-        .map(|cards| count_run(&cards))
-        .sum();
-    if score != 0 {
-        return score;
+    for size in (3..=cards.len()).rev() {
+        let score = cards
+            .iter()
+            .combinations(size)
+            .map(|cards| count_run(&cards))
+            .sum();
+        if score != 0 {
+            return score;
+        }
     }
-
-    let score = cards
-        .iter()
-        .combinations(4)
-        .map(|cards| count_run(&cards))
-        .sum();
-    if score != 0 {
-        return score;
-    }
-
-    let score = cards
-        .iter()
-        .combinations(3)
-        .map(|cards| count_run(&cards))
-        .sum();
-    score
+    0
 }
 
 fn count_flush(hand: &[Card], starter: &Card) -> u8 {
@@ -88,13 +81,16 @@ fn count_nobs(hand: &[Card], starter: &Card) -> u8 {
 }
 
 fn count_run(cards: &[&Card]) -> u8 {
+    let n = cards.len() as u8;
     let start = cards[0].run_order();
-    for i in 1..cards.len() {
-        if cards[i].run_order() != (start + i as u8) {
-            return 0;
-        }
+    if cards
+        .iter()
+        .map(|card| card.run_order())
+        .eq(start..start + n)
+    {
+        return n;
     }
-    return cards.len() as u8;
+    0
 }
 
 #[cfg(test)]
@@ -112,7 +108,7 @@ mod tests {
         ];
         let starter = Card::new(Suit::Hearts, Rank::King);
 
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 2);
     }
 
@@ -126,7 +122,7 @@ mod tests {
         ];
         let starter = Card::new(Suit::Hearts, Rank::King);
 
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 8);
     }
 
@@ -140,7 +136,7 @@ mod tests {
         ];
         let starter = Card::new(Suit::Clubs, Rank::Nine);
 
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 5);
     }
 
@@ -154,7 +150,7 @@ mod tests {
         ];
         let starter = Card::new(Suit::Clubs, Rank::Eight);
 
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 4);
     }
 
@@ -167,7 +163,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Jack),
         ];
         let starter = Card::new(Suit::Clubs, Rank::Ten);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 10);
     }
 
@@ -180,7 +176,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Jack),
         ];
         let starter = Card::new(Suit::Clubs, Rank::Ten);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 3);
     }
 
@@ -194,7 +190,7 @@ mod tests {
         ];
         let starter = Card::new(Suit::Clubs, Rank::Ten);
 
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 8);
     }
 
@@ -207,7 +203,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Jack),
         ];
         let starter = Card::new(Suit::Clubs, Rank::Ten);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 15);
     }
 
@@ -220,7 +216,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Six),
         ];
         let starter = Card::new(Suit::Clubs, Rank::Four);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 4);
     }
 
@@ -233,7 +229,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Six),
         ];
         let starter = Card::new(Suit::Spades, Rank::Four);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 5);
     }
 
@@ -246,7 +242,7 @@ mod tests {
             Card::new(Suit::Clubs, Rank::Eight),
         ];
         let starter = Card::new(Suit::Spades, Rank::Four);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 1);
     }
 
@@ -259,7 +255,7 @@ mod tests {
             Card::new(Suit::Clubs, Rank::Five),
         ];
         let starter = Card::new(Suit::Hearts, Rank::Five);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 29);
     }
 
@@ -272,7 +268,7 @@ mod tests {
             Card::new(Suit::Spades, Rank::Eight),
         ];
         let starter = Card::new(Suit::Hearts, Rank::Ten);
-        let score = score_hand(&hand, &starter);
+        let score = score_the_show(&hand, &starter);
         assert_eq!(score, 0);
     }
 }
