@@ -2,15 +2,19 @@ use core::time;
 use std::thread;
 
 use card::{Card, Deck};
+use game::Game;
 use itertools::Itertools;
 use the_play::score_the_play;
 use the_show::score_the_show;
 
 mod card;
+mod game;
 mod the_play;
 mod the_show;
 
 fn main() {
+    let game = Game::new();
+
     let mut p1_score = 0u8;
     let mut p2_score = 0u8;
 
