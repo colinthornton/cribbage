@@ -4,16 +4,16 @@ use itertools::Itertools;
 pub fn score_the_play(cards: &[Card]) -> u8 {
     let mut score = 0;
 
-    score += count_count(cards);
+    score += count_fifteen(cards);
     score += count_pairs(cards);
     score += count_runs(cards);
 
     score
 }
 
-fn count_count(cards: &[Card]) -> u8 {
+fn count_fifteen(cards: &[Card]) -> u8 {
     let count = cards.iter().map(|card| card.count_value()).sum::<u8>();
-    if count == 15 || count == 31 {
+    if count == 15 {
         return 2;
     }
     0
@@ -71,19 +71,6 @@ mod tests {
 
         let score = score_the_play(&cards);
         assert_eq!(score, 2);
-    }
-
-    #[test]
-    fn it_counts_thirty_ones() {
-        let cards = vec![
-            Card::new(Suit::Spades, Rank::Ten),
-            Card::new(Suit::Spades, Rank::Jack),
-            Card::new(Suit::Spades, Rank::King),
-            Card::new(Suit::Spades, Rank::Ace),
-        ];
-
-        let score = score_the_play(&cards);
-        assert_eq!(score, 2)
     }
 
     #[test]
