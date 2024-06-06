@@ -50,7 +50,7 @@ impl Deck {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Card {
     suit: Suit,
     rank: Rank,
