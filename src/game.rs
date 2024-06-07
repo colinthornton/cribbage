@@ -49,10 +49,11 @@ impl Game {
 
         let (action_sender, action_receiver) = sync_channel(1);
         self.players.push(Player::new(
-            self.players.len(),
+            self.players.len() + 1,
             event_sender,
             action_receiver,
         ));
+        println!("P{} joins", self.players.last().unwrap().id);
         action_sender
     }
 
@@ -64,7 +65,6 @@ impl Game {
     }
 
     fn transition(&mut self, state: GameState) {
-        println!("transition {:?}", state);
         self.state = state;
         self.game_loop();
     }
@@ -83,11 +83,13 @@ impl Game {
                     });
                 }
 
+                println!("P{} deals", self.dealer().id);
                 self.transition(GameState::Discard);
             }
             GameState::Discard => {
                 for player in self.players.iter_mut() {
                     let discarded = player.await_discard();
+                    println!("P{} discards", player.id);
                     self.crib.extend(discarded);
                 }
 
@@ -96,6 +98,7 @@ impl Game {
             GameState::Cut => {
                 let starter = self.deck.draw().unwrap();
                 self.starter = Some(starter);
+                println!("P{} cuts {}", self.player().id, starter);
                 if starter.rank() == Rank::Jack {
                     self.add_score(self.dealer_index, 2);
                     if self.state == GameState::Over {
@@ -107,6 +110,7 @@ impl Game {
             }
             GameState::Play => {
                 let player = self.player();
+                let id = player.id;
 
                 if player.can_play(self.count()) {
                     player.send_event(GameEvent::PlayRequest {
@@ -120,7 +124,7 @@ impl Game {
                     let player = self.player_mut();
                     player.play_card(card);
 
-                    println!("P{}: {} {}", self.player_index, card, self.count());
+                    println!("P{}: {} {}", id, card, self.count());
 
                     let score = score_the_play(&self.played);
                     if score > 0 {
@@ -142,6 +146,7 @@ impl Game {
                     self.go = false;
                 } else {
                     self.go = true;
+                    println!("P{}: go", id);
                 }
 
                 if self.players.iter().all(|player| player.played_out()) {
@@ -167,8 +172,8 @@ impl Game {
                 let shower = &self.players[shower_i];
                 let score = score_the_show(&shower.hand, &self.starter.unwrap());
                 println!(
-                    "P{}: {} - {} {} {} {} {}",
-                    shower_i,
+                    "P{} hand: {} - {} {} {} {} {}",
+                    shower.id,
                     self.starter.unwrap(),
                     shower.hand[0],
                     shower.hand[1],
@@ -182,10 +187,11 @@ impl Game {
                 }
 
                 let dealer = self.dealer();
+                let id = dealer.id;
                 let score = score_the_show(&dealer.hand, &self.starter.unwrap());
                 println!(
-                    "P{}: {} - {} {} {} {} {}",
-                    self.dealer_index,
+                    "P{} hand: {} - {} {} {} {} {}",
+                    id,
                     self.starter.unwrap(),
                     dealer.hand[0],
                     dealer.hand[1],
@@ -200,8 +206,8 @@ impl Game {
 
                 let score = score_the_show(&self.crib, &self.starter.unwrap());
                 println!(
-                    "P{}: {} - {} {} {} {} {}",
-                    self.dealer_index,
+                    "P{} crib: {} - {} {} {} {} {}",
+                    id,
                     self.starter.unwrap(),
                     self.crib[0],
                     self.crib[1],
@@ -252,12 +258,16 @@ impl Game {
 
     fn add_score(&mut self, player_index: usize, score: u8) {
         let player = &mut self.players[player_index];
+        let id = player.id;
         let new_score = player.add_score(score);
+
         println!(
-            "SCORE P0: {} P1: {}",
+            "SCORE P1: {} P2: {}",
             self.players[0].score, self.players[1].score
         );
+
         if new_score == MAX_SCORE {
+            println!("P{} wins", id);
             self.transition(GameState::Over)
         }
     }

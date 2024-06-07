@@ -1,31 +1,17 @@
 use crate::card::{Card, Rank};
 use crate::game::{GameAction, GameEvent};
+use crate::the_play::score_the_play;
 use itertools::Itertools;
 use std::sync::mpsc::{Receiver, SyncSender};
+use std::{thread, time};
 
 pub fn launch_ai(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<GameAction>) {
     loop {
         let event = event_receiver.recv();
+        thread::sleep(time::Duration::from_millis(1000));
         match event {
             Ok(GameEvent::Deal { cards, dealer }) => {
-                println!(
-                    "Deal {{ cards: {}, dealer: {} }}",
-                    cards
-                        .iter()
-                        .map(|card| card.to_string())
-                        .collect_vec()
-                        .join(", "),
-                    dealer
-                );
                 let discarded = discard_cards(cards, dealer);
-                println!(
-                    "discarded: {}",
-                    discarded
-                        .iter()
-                        .map(|card| card.to_string())
-                        .collect_vec()
-                        .join(", ")
-                );
                 let Ok(_) = action_sender.send(GameAction::Discard { discarded }) else {
                     break;
                 };
@@ -35,11 +21,7 @@ pub fn launch_ai(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<
                 played,
                 count,
             }) => {
-                // TODO: play decision
-                let card = hand
-                    .into_iter()
-                    .filter(|card| card.count_value() + count <= 31)
-                    .collect_vec()[0];
+                let card = select_play(hand, played, count);
                 let Ok(_) = action_sender.send(GameAction::Play { card }) else {
                     break;
                 };
@@ -120,8 +102,8 @@ fn count_fifteens(cards: &[Card]) -> f32 {
     let score = counts
         .map(|count| match count {
             15 => 2f32,
-            6..=10 => potential_score(1, 2),
-            5 => potential_score(4, 2),
+            6..=10 => potential_score(4, 52, 2),
+            5 => potential_score(16, 52, 2),
             _ => 0f32,
         })
         .sum();
@@ -162,7 +144,7 @@ fn count_flush(hand: &[Card]) -> f32 {
     if hand[1..].iter().all(|card| card.suit() == suit) {
         // Small chance to get the other two cards flushed in the crib
         if hand.len() == 2 {
-            return 1f32 / 13f32 / 13f32 * 4f32;
+            return 11f32 / 52f32 * 10f32 / 52f32 * 4f32;
         }
         return 4f32;
     }
@@ -191,9 +173,9 @@ fn count_run(cards: &[&Card]) -> f32 {
             1 => {
                 let ranks = cards.iter().map(|card| card.rank()).collect_vec();
                 if ranks.contains(&Rank::Ace) || ranks.contains(&Rank::King) {
-                    return potential_score(1, 3);
+                    return potential_score(4, 52, 3);
                 }
-                return potential_score(2, 3);
+                return potential_score(8, 52, 3);
             }
             _ => return 0f32,
         }
@@ -207,14 +189,62 @@ fn count_run(cards: &[&Card]) -> f32 {
         let ranks = cards.iter().map(|card| card.rank()).collect_vec();
         // we score n guaranteed, a card on either side nets another point, a card within the run scores another n points
         if ranks.contains(&Rank::Ace) || ranks.contains(&Rank::King) {
-            return n as f32 + potential_score(1, 1) + potential_score(n, n);
+            return n as f32 + potential_score(4, 52, 1) + potential_score(n * 4, 52, n);
         }
-        return n as f32 + potential_score(2, 1) + potential_score(n, n);
+        return n as f32 + potential_score(8, 52, 1) + potential_score(n * 4, 52, n);
     }
 
     0f32
 }
 
-fn potential_score(n_card_needed: u8, potential_score: u8) -> f32 {
-    n_card_needed as f32 / 13f32 * potential_score as f32
+fn potential_score(n_card_needed: u8, n_card_remaining: u8, potential_score: u8) -> f32 {
+    n_card_needed as f32 / n_card_remaining as f32 * potential_score as f32
+}
+
+fn select_play(hand: Vec<Card>, played: Vec<Card>, count: u8) -> Card {
+    let playable_cards = hand
+        .into_iter()
+        .filter(|card| card.count_value() + count <= 31)
+        .collect_vec();
+    let mut results = playable_cards
+        .iter()
+        .map(|card| {
+            let mut cards = played.to_owned();
+            cards.push(card.to_owned());
+            let score = score_the_play(&cards);
+
+            if score == 0 {
+                let Some(last_card) = played.last() else {
+                    return (card, 0i8);
+                };
+
+                // discourage giving the oppontent a run opportunity
+                let last_run_order = last_card.run_order();
+                let card_run_order = card.run_order();
+                let diff = last_run_order.max(card_run_order) - last_run_order.min(card_run_order);
+                if diff <= 2 {
+                    return (card, -1);
+                }
+
+                let count = card.count_value() + count;
+                // discourage making the count 10 since holding 5s is common
+                if count == 10 {
+                    return (card, -1);
+                }
+
+                // encourage keeping the count 11+ away from a score
+                if count < 5 || count < 21 {
+                    return (card, 1);
+                }
+            }
+
+            return (card, score as i8);
+        })
+        .collect_vec();
+
+    // sort by count value descending, then score value descending
+    results.sort_by(|(a, _), (b, _)| b.count_value().cmp(&a.count_value()));
+    results.sort_by(|(_, a), (_, b)| b.cmp(a));
+
+    results[0].0.to_owned()
 }
