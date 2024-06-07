@@ -4,7 +4,10 @@ use crate::{
     the_show::score_the_show,
 };
 use itertools::Itertools;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::{
+    sync::mpsc::{sync_channel, Receiver, SyncSender},
+    thread, time,
+};
 
 const PLAYERS_SIZE: usize = 2;
 const CRIB_SIZE: usize = 4;
@@ -89,7 +92,7 @@ impl Game {
             GameState::Discard => {
                 for player in self.players.iter_mut() {
                     let discarded = player.await_discard();
-                    println!("P{} discards", player.id);
+                    // println!("P{} discards", player.id);
                     self.crib.extend(discarded);
                 }
 
@@ -186,6 +189,8 @@ impl Game {
                     return;
                 }
 
+                thread::sleep(time::Duration::from_secs(2));
+
                 let dealer = self.dealer();
                 let id = dealer.id;
                 let score = score_the_show(&dealer.hand, &self.starter.unwrap());
@@ -204,6 +209,8 @@ impl Game {
                     return;
                 }
 
+                thread::sleep(time::Duration::from_secs(2));
+
                 let score = score_the_show(&self.crib, &self.starter.unwrap());
                 println!(
                     "P{} crib: {} - {} {} {} {} {}",
@@ -219,6 +226,8 @@ impl Game {
                 if self.state == GameState::Over {
                     return;
                 }
+
+                thread::sleep(time::Duration::from_secs(2));
 
                 self.transition(GameState::Cleanup)
             }
