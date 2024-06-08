@@ -24,7 +24,7 @@ impl Deck {
     pub fn draw_n(&mut self, n: u8) -> Result<Vec<Card>, InsufficientCardsError> {
         let remaining = self.cards.len() as u8;
         if remaining < n.into() {
-            return Err(InsufficientCardsError { remaining });
+            return Err(InsufficientCardsError);
         }
 
         let mut cards = Vec::with_capacity(n.into());
@@ -36,9 +36,7 @@ impl Deck {
 
     /// Draw a single card from the deck
     pub fn draw(&mut self) -> Result<Card, InsufficientCardsError> {
-        self.cards
-            .pop()
-            .ok_or(InsufficientCardsError { remaining: 0 })
+        self.cards.pop().ok_or(InsufficientCardsError)
     }
 
     fn shuffle(&mut self) {
@@ -166,6 +164,4 @@ pub enum Rank {
 }
 
 #[derive(Debug)]
-pub struct InsufficientCardsError {
-    remaining: u8,
-}
+pub struct InsufficientCardsError;

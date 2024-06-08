@@ -4,6 +4,7 @@ use crate::{
     the_show::score_the_show,
 };
 use itertools::Itertools;
+use rand::{thread_rng, Rng};
 use std::{
     sync::mpsc::{sync_channel, Receiver, SyncSender},
     thread, time,
@@ -16,7 +17,6 @@ const MAX_SCORE: u8 = 121;
 const MAX_COUNT: u8 = 31;
 
 pub struct Game {
-    state: GameState,
     players: Vec<Player>,
     dealer_index: usize,
     player_index: usize,
@@ -24,13 +24,11 @@ pub struct Game {
     crib: Vec<Card>,
     starter: Option<Card>,
     played: Vec<Card>,
-    go: bool,
 }
 
 impl Game {
     pub fn new() -> Game {
         Game {
-            state: GameState::AwaitingPlayers,
             players: Vec::with_capacity(PLAYERS_SIZE),
             dealer_index: 0,
             player_index: 1,
@@ -38,25 +36,22 @@ impl Game {
             crib: Vec::with_capacity(CRIB_SIZE),
             starter: None,
             played: Vec::with_capacity(PLAYED_SIZE),
-            go: false,
         }
     }
 
     pub fn register_player(
         &mut self,
+        id: String,
         event_sender: SyncSender<GameEvent>,
     ) -> SyncSender<GameAction> {
-        if self.state != GameState::AwaitingPlayers {
+        if self.players.len() == 2 {
             panic!("Can't register more than two players");
         }
 
         let (action_sender, action_receiver) = sync_channel(1);
-        self.players.push(Player::new(
-            self.players.len() + 1,
-            event_sender,
-            action_receiver,
-        ));
-        println!("P{} joins", self.players.last().unwrap().id);
+        self.players
+            .push(Player::new(id, event_sender, action_receiver));
+        println!("{} joins", self.players.last().unwrap().id);
         action_sender
     }
 
@@ -64,185 +59,180 @@ impl Game {
         if self.players.len() < PLAYERS_SIZE {
             panic!("Can't start")
         }
-        self.transition(GameState::Deal);
-    }
 
-    fn transition(&mut self, state: GameState) {
-        self.state = state;
-        self.game_loop();
+        self.dealer_index = thread_rng().gen_range(0..self.players.len());
+        self.player_index = (self.dealer_index + 1) % self.players.len();
+        println!("{} gets the first deal", self.dealer().id);
+
+        self.game_loop()
     }
 
     fn game_loop(&mut self) {
-        match &self.state {
-            GameState::AwaitingPlayers => {
-                panic!("Unexpected state");
+        loop {
+            // Deal
+            self.deal();
+            for player in self.players.iter() {
+                player.send_event(GameEvent::Deal {
+                    cards: player.hand.to_owned(),
+                    dealer: player.id == self.dealer().id,
+                });
             }
-            GameState::Deal => {
-                self.deal();
-                for player in self.players.iter() {
-                    player.send_event(GameEvent::Deal {
-                        cards: player.hand.to_owned(),
-                        dealer: player.id == self.dealer().id,
-                    });
+            println!("{} deals", self.dealer().id);
+
+            // Discard
+            for player in self.players.iter_mut() {
+                let discarded = player.await_discard();
+                // println!("P{} discards", player.id);
+                self.crib.extend(discarded);
+            }
+
+            // Cut
+            let starter = self.deck.draw().unwrap();
+            self.starter = Some(starter);
+            println!("{} cuts {}", self.player().id, starter);
+            if starter.rank() == Rank::Jack {
+                let game_over = self.add_score(self.dealer_index, 2);
+                if game_over {
+                    return;
                 }
-
-                println!("P{} deals", self.dealer().id);
-                self.transition(GameState::Discard);
             }
-            GameState::Discard => {
-                for player in self.players.iter_mut() {
-                    let discarded = player.await_discard();
-                    // println!("P{} discards", player.id);
-                    self.crib.extend(discarded);
-                }
 
-                self.transition(GameState::Cut);
-            }
-            GameState::Cut => {
-                let starter = self.deck.draw().unwrap();
-                self.starter = Some(starter);
-                println!("P{} cuts {}", self.player().id, starter);
-                if starter.rank() == Rank::Jack {
-                    self.add_score(self.dealer_index, 2);
-                    if self.state == GameState::Over {
-                        return;
-                    }
-                }
-
-                self.transition(GameState::Play);
-            }
-            GameState::Play => {
-                let player = self.player();
-                let id = player.id;
-
-                if player.can_play(self.count()) {
-                    player.send_event(GameEvent::PlayRequest {
-                        hand: player.unplayed_cards().collect_vec().to_owned(),
+            // Play
+            while !self.players.iter().all(|player| player.played_out()) {
+                if self.player().can_play(self.count()) {
+                    self.player().send_event(GameEvent::PlayRequest {
+                        hand: self.player().unplayed_cards().collect_vec().to_owned(),
                         played: self.played.to_owned(),
                         count: self.count(),
                     });
-                    let card = player.await_play(self.count());
+                    let count = self.count();
+                    let card = self.player_mut().await_play(count);
                     self.played.push(card);
 
-                    let player = self.player_mut();
-                    player.play_card(card);
-
-                    println!("P{}: {} {}", id, card, self.count());
-
                     let score = score_the_play(&self.played);
+                    let mut score_msg = "".to_string();
                     if score > 0 {
-                        self.add_score(self.player_index, score);
-                        if self.state == GameState::Over {
+                        score_msg = format!(" for {}", score);
+                    }
+                    println!(
+                        "{}: {} {}{}",
+                        self.player().id,
+                        card,
+                        self.count(),
+                        score_msg
+                    );
+
+                    let game_over = self.add_score(self.player_index, score);
+                    if game_over {
+                        return;
+                    }
+
+                    if self.count() == MAX_COUNT
+                        || self.players.iter().all(|player| player.played_out())
+                    {
+                        let game_over;
+                        if self.count() == MAX_COUNT {
+                            println!("{}: {} for 2", self.player().id, MAX_COUNT);
+                            game_over = self.add_score(self.player_index, 2);
+                        } else {
+                            println!("{}: 1 for last card", self.player().id);
+                            game_over = self.add_score(self.player_index, 1);
+                        }
+                        if game_over {
                             return;
                         }
-                    }
-                } else if self.go {
-                    if self.count() == MAX_COUNT {
-                        self.add_score(self.player_index, 2);
-                    } else {
-                        self.add_score(self.player_index, 1);
-                    }
-                    if self.state == GameState::Over {
-                        return;
-                    }
-                    self.played = Vec::with_capacity(8 - self.played.len());
-                    self.go = false;
-                } else {
-                    self.go = true;
-                    println!("P{}: go", id);
-                }
 
-                if self.players.iter().all(|player| player.played_out()) {
-                    if self.count() == MAX_COUNT {
-                        self.add_score(self.player_index, 2);
-                    } else {
-                        self.add_score(self.player_index, 1);
+                        self.played = Vec::with_capacity(PLAYED_SIZE);
+                        for player in self.players.iter_mut() {
+                            player.go = false;
+                        }
                     }
-                    if self.state == GameState::Over {
+                } else if self.next_player().go {
+                    println!("{}: 1 for the go", self.player().id);
+                    let game_over = self.add_score(self.player_index, 1);
+                    if game_over {
                         return;
                     }
 
-                    self.transition(GameState::Show);
-                } else {
-                    if self.players[(self.player_index + 1) % 2].can_play(self.count()) {
-                        self.next_player();
+                    self.played = Vec::with_capacity(PLAYED_SIZE);
+                    for player in self.players.iter_mut() {
+                        player.go = false;
                     }
-                    self.game_loop();
+                } else if !self.player().go && !self.player().played_out() {
+                    self.player_mut().go = true;
+                    println!("{}: go", self.player().id);
                 }
+
+                self.switch_player();
             }
-            GameState::Show => {
-                let shower_i = (self.dealer_index + 1) % 2;
-                let shower = &self.players[shower_i];
-                let score = score_the_show(&shower.hand, &self.starter.unwrap());
-                println!(
-                    "P{} hand: {} - {} {} {} {} {}",
-                    shower.id,
-                    self.starter.unwrap(),
-                    shower.hand[0],
-                    shower.hand[1],
-                    shower.hand[2],
-                    shower.hand[3],
-                    score,
-                );
-                self.add_score(shower_i, score);
-                if self.state == GameState::Over {
-                    return;
-                }
 
-                thread::sleep(time::Duration::from_secs(2));
-
-                let dealer = self.dealer();
-                let id = dealer.id;
-                let score = score_the_show(&dealer.hand, &self.starter.unwrap());
-                println!(
-                    "P{} hand: {} - {} {} {} {} {}",
-                    id,
-                    self.starter.unwrap(),
-                    dealer.hand[0],
-                    dealer.hand[1],
-                    dealer.hand[2],
-                    dealer.hand[3],
-                    score,
-                );
-                self.add_score(self.dealer_index, score);
-                if self.state == GameState::Over {
-                    return;
-                }
-
-                thread::sleep(time::Duration::from_secs(2));
-
-                let score = score_the_show(&self.crib, &self.starter.unwrap());
-                println!(
-                    "P{} crib: {} - {} {} {} {} {}",
-                    id,
-                    self.starter.unwrap(),
-                    self.crib[0],
-                    self.crib[1],
-                    self.crib[2],
-                    self.crib[3],
-                    score,
-                );
-                self.add_score(self.dealer_index, score);
-                if self.state == GameState::Over {
-                    return;
-                }
-
-                thread::sleep(time::Duration::from_secs(2));
-
-                self.transition(GameState::Cleanup)
+            // Show
+            let shower_i = (self.dealer_index + 1) % 2;
+            let shower = &self.players[shower_i];
+            let score = score_the_show(&shower.hand, &self.starter.unwrap());
+            println!(
+                "{} hand: {} - {} {} {} {} for {}",
+                shower.id,
+                self.starter.unwrap(),
+                shower.hand[0],
+                shower.hand[1],
+                shower.hand[2],
+                shower.hand[3],
+                score,
+            );
+            let game_over = self.add_score(shower_i, score);
+            if game_over {
+                return;
             }
-            GameState::Cleanup => {
-                self.dealer_index = (self.dealer_index + 1) % 2;
-                self.player_index = (self.dealer_index + 1) % 2;
-                self.deck = Deck::new();
-                self.crib = Vec::with_capacity(CRIB_SIZE);
-                self.starter = None;
-                self.played = Vec::with_capacity(PLAYED_SIZE);
-                self.go = false;
 
-                self.transition(GameState::Deal);
+            thread::sleep(time::Duration::from_secs(2));
+
+            let score = score_the_show(&self.dealer().hand, &self.starter.unwrap());
+            println!(
+                "{} hand: {} - {} {} {} {} for {}",
+                self.dealer().id,
+                self.starter.unwrap(),
+                self.dealer().hand[0],
+                self.dealer().hand[1],
+                self.dealer().hand[2],
+                self.dealer().hand[3],
+                score,
+            );
+            let game_over = self.add_score(self.dealer_index, score);
+            if game_over {
+                return;
             }
-            GameState::Over => {}
+
+            thread::sleep(time::Duration::from_secs(2));
+
+            let score = score_the_show(&self.crib, &self.starter.unwrap());
+            println!(
+                "{} crib: {} - {} {} {} {} for {}",
+                self.dealer().id,
+                self.starter.unwrap(),
+                self.crib[0],
+                self.crib[1],
+                self.crib[2],
+                self.crib[3],
+                score,
+            );
+            let game_over = self.add_score(self.dealer_index, score);
+            if game_over {
+                return;
+            }
+
+            thread::sleep(time::Duration::from_secs(2));
+
+            // Cleanup
+            self.dealer_index = (self.dealer_index + 1) % 2;
+            self.player_index = (self.dealer_index + 1) % 2;
+            self.deck = Deck::new();
+            self.crib = Vec::with_capacity(CRIB_SIZE);
+            self.starter = None;
+            self.played = Vec::with_capacity(PLAYED_SIZE);
+            for player in self.players.iter_mut() {
+                player.go = false;
+            }
         }
     }
 
@@ -258,6 +248,10 @@ impl Game {
         &mut self.players[self.player_index]
     }
 
+    fn next_player(&self) -> &Player {
+        &self.players[(self.player_index + 1) % 2]
+    }
+
     fn deal(&mut self) {
         for player in self.players.iter_mut() {
             let cards = self.deck.draw_n(6).unwrap();
@@ -265,23 +259,30 @@ impl Game {
         }
     }
 
-    fn add_score(&mut self, player_index: usize, score: u8) {
-        let player = &mut self.players[player_index];
-        let id = player.id;
-        let new_score = player.add_score(score);
+    /// Returns true if game is over
+    fn add_score(&mut self, player_index: usize, score: u8) -> bool {
+        if score == 0 {
+            return false;
+        }
+
+        let new_score = {
+            let player = &mut self.players[player_index];
+            player.add_score(score)
+        };
 
         println!(
-            "SCORE P1: {} P2: {}",
-            self.players[0].score, self.players[1].score
+            "SCORE {}: {} {}: {}",
+            self.players[0].id, self.players[0].score, self.players[1].id, self.players[1].score
         );
 
         if new_score == MAX_SCORE {
-            println!("P{} wins", id);
-            self.transition(GameState::Over)
+            println!("{} wins", self.players[player_index].id);
+            return true;
         }
+        return false;
     }
 
-    fn next_player(&mut self) {
+    fn switch_player(&mut self) {
         self.player_index = (self.player_index + 1) % PLAYERS_SIZE;
     }
 
@@ -290,30 +291,19 @@ impl Game {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum GameState {
-    AwaitingPlayers,
-    Deal,
-    Discard,
-    Cut,
-    Play,
-    Show,
-    Cleanup,
-    Over,
-}
-
 struct Player {
-    id: usize,
+    id: String,
     event_sender: SyncSender<GameEvent>,
     action_receiver: Receiver<GameAction>,
     score: u8,
     hand: Vec<Card>,
     played: Vec<Card>,
+    go: bool,
 }
 
 impl Player {
     fn new(
-        id: usize,
+        id: String,
         event_sender: SyncSender<GameEvent>,
         action_receiver: Receiver<GameAction>,
     ) -> Player {
@@ -324,6 +314,7 @@ impl Player {
             score: 0,
             hand: Vec::with_capacity(6),
             played: Vec::with_capacity(4),
+            go: false,
         }
     }
 
@@ -388,7 +379,7 @@ impl Player {
         self.played.len() == self.hand.len()
     }
 
-    fn await_play(&self, count: u8) -> Card {
+    fn await_play(&mut self, count: u8) -> Card {
         loop {
             let action = self.await_action();
             match action {
@@ -396,15 +387,12 @@ impl Player {
                     if !self.playable_cards(count).contains(&card) {
                         continue;
                     }
+                    self.played.push(card);
                     return card;
                 }
                 _ => continue,
             }
         }
-    }
-
-    fn play_card(&mut self, card: Card) {
-        self.played.push(card);
     }
 }
 

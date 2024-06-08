@@ -51,6 +51,7 @@ fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
         &format!("Select 2 cards to discard to {}:", whose_crib),
         cards.clone(),
     )
+    .without_help_message()
     .with_validator(validator)
     .with_page_size(cards.len())
     .prompt();
@@ -64,36 +65,29 @@ fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
     }
 }
 
-fn select_play(hand: Vec<Card>, played: Vec<Card>, count: u8) -> Card {
-    let hand_clone = hand.clone();
+fn select_play(hand: Vec<Card>, _played: Vec<Card>, count: u8) -> Card {
+    loop {
+        let answer = Select::new("Select a card to play:", hand.clone())
+            .without_help_message()
+            .with_page_size(hand.len())
+            .prompt();
 
-    let validator = move |a: &[ListOption<&Card>]| {
-        if a.len() != 1 {
-            return Ok(Validation::Invalid("Select one card".into()));
+        match answer {
+            Ok(card) => {
+                let playable_cards = hand
+                    .iter()
+                    .filter(|card| card.count_value() + count <= 31)
+                    .collect_vec();
+                if playable_cards.contains(&&card) {
+                    return card;
+                }
+                println!("That card can't be played");
+                continue;
+            }
+            Err(err) => match err {
+                InquireError::OperationCanceled => continue,
+                _ => panic!(),
+            },
         }
-        let card = a[0].value;
-
-        let playable_cards = hand_clone
-            .iter()
-            .filter(|card| card.count_value() + count <= 31)
-            .collect_vec();
-        if !playable_cards.contains(&card) {
-            return Ok(Validation::Invalid("That card can't be played".into()));
-        }
-
-        return Ok(Validation::Valid);
-    };
-
-    let answer = MultiSelect::new("Select a card to play:", hand.clone())
-        .with_validator(validator)
-        .with_page_size(hand.len())
-        .prompt();
-
-    match answer {
-        Ok(card) => card[0],
-        Err(err) => match err {
-            InquireError::OperationCanceled => select_play(hand, played, count),
-            _ => panic!(),
-        },
     }
 }

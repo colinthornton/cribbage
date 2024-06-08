@@ -15,13 +15,13 @@ fn main() {
 
     {
         let (event_sender, event_receiver) = sync_channel(1);
-        let action_sender = game.register_player(event_sender);
+        let action_sender = game.register_player("CPU".into(), event_sender);
         thread::spawn(move || launch_ai(event_receiver, action_sender));
     }
 
     {
         let (event_sender, event_receiver) = sync_channel(1);
-        let action_sender = game.register_player(event_sender);
+        let action_sender = game.register_player("HUM".into(), event_sender);
         thread::spawn(move || launch_human(event_receiver, action_sender));
     }
 
