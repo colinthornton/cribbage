@@ -77,13 +77,15 @@ impl Game {
                     cards: player.hand.to_owned(),
                     dealer: i == self.dealer_index,
                 });
+                let discarded = player.await_discard();
+                self.crib.extend(discarded);
             }
             println!("{} deals", self.dealer().id);
 
             // Discard
             for player in self.players.iter_mut() {
-                let discarded = player.await_discard();
-                self.crib.extend(discarded);
+                // let discarded = player.await_discard();
+                // self.crib.extend(discarded);
             }
 
             // Cut

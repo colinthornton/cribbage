@@ -90,6 +90,7 @@ fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
     cards.sort_by(|a, b| a.run_cmp(b));
 
     let hands = cards.clone().into_iter().combinations(4).collect_vec();
+    // order is deterministic so we can match the discard indexes up with the hands by reversing
     let discards = cards
         .into_iter()
         .combinations(2)
@@ -120,20 +121,20 @@ fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
     });
 
     // Debugging
-    // let result = &results[0];
-    // let hand = &result.0;
-    // let discarded = &result.1;
-    // let score = &result.2;
-    // let dealer_msg = if dealer { "(dealer)" } else { "" };
-    // println!(
-    //     "{} {} {} {} - {} {} for {} {}",
-    //     hand[0], hand[1], hand[2], hand[3], discarded[0], discarded[1], score, dealer_msg
-    // );
+    let result = &results[0];
+    let hand = &result.0;
+    let discarded = &result.1;
+    let score = &result.2;
+    let dealer_msg = if dealer { "(dealer)" } else { "(not dealer)" };
+    println!(
+        "{} {} {} {} - {} {} for {} {}",
+        hand[0], hand[1], hand[2], hand[3], discarded[0], discarded[1], score, dealer_msg
+    );
 
-    // let combos = &result.4;
-    // for combo in combos {
-    //     println!("{}", combo);
-    // }
+    let combos = &result.4;
+    for combo in combos {
+        println!("{}", combo);
+    }
 
     let discarded = results[0].1;
     [discarded[0], discarded[1]]
@@ -303,121 +304,34 @@ fn count_run(cards: &[&Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     let start = cards[0].run_order();
 
     // bail early if any cards are off by more than 1
-    let mut offset = false;
-    if cards.iter().enumerate().any(|(i, card)| {
+    let mut missing_rank: Option<Rank> = None;
+    for (i, card) in cards.iter().enumerate() {
         let expected = start + i as u8;
         let actual = card.run_order();
         if actual < expected {
-            return true;
+            return 0f32;
         }
-        match actual - expected {
-            1 => {
-                offset = true;
-                false
+        if missing_rank.is_some() {
+            if actual - expected != 1 {
+                return 0f32;
             }
-            0 => {
-                if offset {
-                    true
-                } else {
-                    false
-                }
+        } else {
+            if actual - expected == 1 {
+                missing_rank = Some(rank_from_run_order(expected).unwrap());
             }
-            _ => true,
+            if actual - expected > 1 {
+                return 0f32;
+            }
         }
-    }) {
-        return 0f32;
     }
 
-    let actual_ranks = cards.iter().map(|card| card.rank()).collect_vec();
-    let expected_ranks = (start..start + n)
-        .map(|run_order| rank_from_run_order(run_order).unwrap())
-        .collect_vec();
-    let missing_ranks = expected_ranks
-        .iter()
-        .filter(|rank| !actual_ranks.contains(rank))
-        .collect_vec();
-
-    if missing_ranks.len() == 0 {
-        let end = cards.last().unwrap().run_order();
-
-        if n == 2 {
-            // potential run
-            let score;
-            if cards[0].rank() == Rank::Ace {
-                score = potential_score(
-                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
-                    deck.len(),
-                    3,
-                );
-            } else if cards.last().unwrap().rank() == Rank::King {
-                score = potential_score(
-                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
-                    deck.len(),
-                    3,
-                );
-            } else {
-                score = potential_score(
-                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len()
-                        + filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
-                    deck.len(),
-                    3,
-                );
-            };
-
-            combos.push(Combo {
-                kind: ComboKind::PotentialRun,
-                cards: cards.iter().map(|card| **card).collect_vec(),
-                score,
-            });
-            return score;
-        }
-
-        // complete run
-        // we score n guaranteed, a card on either side nets another point, a card within the run scores another n points
-        let same_rank = cards
-            .iter()
-            .map(|card| filter_by_rank(deck, card.rank()).len())
-            .sum();
-        let score;
-        if cards[0].rank() == Rank::Ace {
-            score = n as f32
-                + potential_score(same_rank, deck.len(), n)
-                + potential_score(
-                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
-                    deck.len(),
-                    1,
-                );
-        } else if cards.last().unwrap().rank() == Rank::King {
-            score = n as f32
-                + potential_score(same_rank, deck.len(), n)
-                + potential_score(
-                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
-                    deck.len(),
-                    1,
-                );
-        } else {
-            score = n as f32
-                + potential_score(same_rank, deck.len(), n)
-                + potential_score(
-                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
-                    deck.len(),
-                    1,
-                )
-                + potential_score(
-                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
-                    deck.len(),
-                    1,
-                );
-        };
-
-        combos.push(Combo {
-            kind: ComboKind::Run,
-            cards: cards.iter().map(|card| **card).collect_vec(),
-            score,
-        });
-        return score;
-    } else if missing_ranks.len() == 1 {
-        let score = potential_score(filter_by_rank(deck, *missing_ranks[0]).len(), deck.len(), n);
+    // potential run if we find a card of `missing_rank`
+    if missing_rank.is_some() {
+        let score = potential_score(
+            filter_by_rank(deck, missing_rank.unwrap()).len(),
+            deck.len(),
+            n,
+        );
         combos.push(Combo {
             kind: ComboKind::PotentialRun,
             cards: cards.iter().map(|card| **card).collect_vec(),
@@ -425,7 +339,88 @@ fn count_run(cards: &[&Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
         });
         return score;
     }
-    0f32
+
+    let end = cards.last().unwrap().run_order();
+
+    // potential run if we find a card on either side
+    if n == 2 {
+        let score;
+        if cards[0].rank() == Rank::Ace {
+            score = potential_score(
+                filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                deck.len(),
+                3,
+            );
+        } else if cards.last().unwrap().rank() == Rank::King {
+            score = potential_score(
+                filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                deck.len(),
+                3,
+            );
+        } else {
+            score = potential_score(
+                filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                deck.len(),
+                3,
+            ) + potential_score(
+                filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                deck.len(),
+                3,
+            );
+        };
+
+        combos.push(Combo {
+            kind: ComboKind::PotentialRun,
+            cards: cards.iter().map(|card| **card).collect_vec(),
+            score,
+        });
+        return score;
+    }
+
+    // complete run
+    // we score n guaranteed, a card on either side nets another point, a card within the run scores another n points
+    let same_rank = cards
+        .iter()
+        .map(|card| filter_by_rank(deck, card.rank()).len())
+        .sum();
+    let score;
+    if cards[0].rank() == Rank::Ace {
+        score = n as f32
+            + potential_score(same_rank, deck.len(), n)
+            + potential_score(
+                filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                deck.len(),
+                1,
+            );
+    } else if cards.last().unwrap().rank() == Rank::King {
+        score = n as f32
+            + potential_score(same_rank, deck.len(), n)
+            + potential_score(
+                filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                deck.len(),
+                1,
+            );
+    } else {
+        score = n as f32
+            + potential_score(same_rank, deck.len(), n)
+            + potential_score(
+                filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                deck.len(),
+                1,
+            )
+            + potential_score(
+                filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                deck.len(),
+                1,
+            );
+    };
+
+    combos.push(Combo {
+        kind: ComboKind::Run,
+        cards: cards.iter().map(|card| **card).collect_vec(),
+        score,
+    });
+    return score;
 }
 
 fn potential_score(n_card_needed: usize, n_card_remaining: usize, potential_score: u8) -> f32 {
