@@ -71,10 +71,11 @@ impl Game {
         loop {
             // Deal
             self.deal();
-            for player in self.players.iter() {
+
+            for (i, player) in self.players.iter_mut().enumerate() {
                 player.send_event(GameEvent::Deal {
                     cards: player.hand.to_owned(),
-                    dealer: player.id == self.dealer().id,
+                    dealer: i == self.dealer_index,
                 });
             }
             println!("{} deals", self.dealer().id);
@@ -82,7 +83,6 @@ impl Game {
             // Discard
             for player in self.players.iter_mut() {
                 let discarded = player.await_discard();
-                // println!("P{} discards", player.id);
                 self.crib.extend(discarded);
             }
 
@@ -91,6 +91,7 @@ impl Game {
             self.starter = Some(starter);
             println!("{} cuts {}", self.player().id, starter);
             if starter.rank() == Rank::Jack {
+                println!("{}: 2 for his heels", self.dealer().id);
                 let game_over = self.add_score(self.dealer_index, 2);
                 if game_over {
                     return;
@@ -158,7 +159,7 @@ impl Game {
                     for player in self.players.iter_mut() {
                         player.go = false;
                     }
-                } else if !self.player().go && !self.player().played_out() {
+                } else if !self.player().go {
                     self.player_mut().go = true;
                     println!("{}: go", self.player().id);
                 }

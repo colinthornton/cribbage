@@ -1,9 +1,51 @@
-use crate::card::{Card, Rank};
+use crate::card::{rank_from_run_order, Card, Rank, Suit};
 use crate::game::{GameAction, GameEvent};
 use crate::the_play::score_the_play;
 use itertools::Itertools;
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::{thread, time};
+use std::{fmt, thread, time};
+use strum::{EnumCount, IntoEnumIterator};
+
+struct Combo {
+    kind: ComboKind,
+    cards: Vec<Card>,
+    score: f32,
+}
+
+enum ComboKind {
+    Fifteen,
+    PotentialFifteen,
+    Pair,
+    Run,
+    PotentialRun,
+    Flush,
+    PotentialFlush,
+    PotentialNobs,
+}
+
+impl fmt::Display for Combo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for card in &self.cards {
+            write!(f, "{} ", card)?;
+        }
+        write!(f, "- {} for {}", &self.kind, &self.score)
+    }
+}
+
+impl fmt::Display for ComboKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            ComboKind::Fifteen => write!(f, "fifteen"),
+            ComboKind::PotentialFifteen => write!(f, "potential fifteen"),
+            ComboKind::Pair => write!(f, "pair"),
+            ComboKind::Run => write!(f, "run"),
+            ComboKind::PotentialRun => write!(f, "potential run"),
+            ComboKind::Flush => write!(f, "flush"),
+            ComboKind::PotentialFlush => write!(f, "potential flush"),
+            ComboKind::PotentialNobs => write!(f, "potential nobs"),
+        }
+    }
+}
 
 pub fn launch_ai(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<GameAction>) {
     loop {
@@ -34,6 +76,19 @@ pub fn launch_ai(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<
 }
 
 fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
+    let mut deck = Vec::with_capacity(Rank::COUNT * Suit::COUNT - cards.len());
+    for rank in Rank::iter() {
+        for suit in Suit::iter() {
+            let card = Card::new(suit, rank);
+            if !cards.contains(&card) {
+                deck.push(card);
+            }
+        }
+    }
+
+    let mut cards = cards.to_owned();
+    cards.sort_by(|a, b| a.run_cmp(b));
+
     let hands = cards.clone().into_iter().combinations(4).collect_vec();
     let discards = cards
         .into_iter()
@@ -49,40 +104,64 @@ fn discard_cards(cards: Vec<Card>, dealer: bool) -> [Card; 2] {
         .enumerate()
         .map(|(i, hand)| {
             let discarded = &discards[i];
-            let score = score(&hand, &discarded, dealer);
+            let mut combos: Vec<Combo> = Vec::new();
+            let score = score(&hand, &discarded, &deck, dealer, &mut combos);
             let count_total = count_total(&hand);
-            (discarded, score, count_total)
+            (hand, discarded, score, count_total, combos)
         })
         .collect_vec();
 
     // choose highest scoring hand with preference to smaller count totals
-    results
-        .sort_by(|(_, _, count_total_a), (_, _, count_total_b)| count_total_b.cmp(count_total_a));
-    results.sort_by(|(_, score_a, _), (_, score_b, _)| score_b.partial_cmp(score_a).unwrap());
+    results.sort_by(|(_, _, _, count_total_a, _), (_, _, _, count_total_b, _)| {
+        count_total_b.cmp(count_total_a)
+    });
+    results.sort_by(|(_, _, score_a, _, _), (_, _, score_b, _, _)| {
+        score_b.partial_cmp(score_a).unwrap()
+    });
 
-    let discarded = results[0].0;
+    // Debugging
+    // let result = &results[0];
+    // let hand = &result.0;
+    // let discarded = &result.1;
+    // let score = &result.2;
+    // let dealer_msg = if dealer { "(dealer)" } else { "" };
+    // println!(
+    //     "{} {} {} {} - {} {} for {} {}",
+    //     hand[0], hand[1], hand[2], hand[3], discarded[0], discarded[1], score, dealer_msg
+    // );
+
+    // let combos = &result.4;
+    // for combo in combos {
+    //     println!("{}", combo);
+    // }
+
+    let discarded = results[0].1;
     [discarded[0], discarded[1]]
 }
 
-fn score(hand: &[Card], discarded: &[Card], dealer: bool) -> f32 {
-    let mut score = 0f32;
-    score += count_fifteens(hand);
-    score += count_pairs(hand);
-    score += count_runs(hand);
-    score += count_flush(hand);
-    score += count_nobs(hand);
+fn score(
+    hand: &[Card],
+    discarded: &[Card],
+    deck: &[Card],
+    dealer: bool,
+    combos: &mut Vec<Combo>,
+) -> f32 {
+    let hand_score = count_fifteens(hand, deck, combos)
+        + count_pairs(hand, deck, combos)
+        + count_runs(hand, deck, combos)
+        + count_flush(hand, deck, combos)
+        + count_nobs(hand, deck, combos);
 
-    let mut discard_score = 0f32;
-    discard_score += count_fifteens(discarded);
-    discard_score += count_pairs(discarded);
-    discard_score += count_runs(discarded);
-    discard_score += count_flush(discarded);
-    discard_score += count_nobs(discarded);
+    let discard_score = count_fifteens(discarded, deck, combos)
+        + count_pairs(discarded, deck, combos)
+        + count_runs(discarded, deck, combos)
+        + count_flush(discarded, deck, combos)
+        + count_nobs(discarded, deck, combos);
 
     if dealer {
-        score + discard_score
+        hand_score + discard_score
     } else {
-        score - discard_score
+        hand_score - discard_score
     }
 }
 
@@ -90,33 +169,53 @@ fn count_total(hand: &[Card]) -> u8 {
     hand.iter().map(|card| card.count_value()).sum()
 }
 
-fn count_fifteens(cards: &[Card]) -> f32 {
+fn count_fifteens(cards: &[Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     let card_combinations = (1..=cards.len())
         .map(|size| cards.iter().combinations(size))
         .into_iter()
         .flatten();
 
-    let counts =
-        card_combinations.map(|cards| cards.iter().map(|card| card.count_value()).sum::<u8>());
-
-    let score = counts
-        .map(|count| match count {
-            15 => 2f32,
-            6..=10 => potential_score(4, 52, 2),
-            5 => potential_score(16, 52, 2),
-            _ => 0f32,
+    let score = card_combinations
+        .map(|cards| {
+            let count: u8 = cards.iter().map(|card| card.count_value()).sum();
+            let score: f32;
+            if count == 15 {
+                score = 2f32;
+                combos.push(Combo {
+                    kind: ComboKind::Fifteen,
+                    cards: cards.iter().map(|card| **card).collect_vec(),
+                    score,
+                });
+            } else if (5..=15).contains(&count) {
+                score = potential_score(filter_by_count(deck, 15 - count).len(), deck.len(), 2);
+                combos.push(Combo {
+                    kind: ComboKind::PotentialFifteen,
+                    cards: cards.iter().map(|card| **card).collect_vec(),
+                    score,
+                });
+            } else {
+                score = 0f32;
+            }
+            score
         })
         .sum();
     score
 }
 
-fn count_pairs(cards: &[Card]) -> f32 {
+fn count_pairs(cards: &[Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     let card_combinations = cards.iter().combinations(2);
 
     let score = card_combinations
         .map(|cards| {
-            if cards[0].rank() == cards[1].rank() {
-                2f32
+            let rank = cards[0].rank();
+            if cards[1].rank() == rank {
+                let score = 2f32 + potential_score(filter_by_rank(deck, rank).len(), deck.len(), 4);
+                combos.push(Combo {
+                    kind: ComboKind::Pair,
+                    cards: cards.iter().map(|card| **card).collect_vec(),
+                    score,
+                });
+                score
             } else {
                 0f32
             }
@@ -125,12 +224,12 @@ fn count_pairs(cards: &[Card]) -> f32 {
     score
 }
 
-fn count_runs(cards: &[Card]) -> f32 {
+fn count_runs(cards: &[Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     for size in (2..=cards.len()).rev() {
         let score = cards
             .iter()
             .combinations(size)
-            .map(|cards| count_run(&cards))
+            .map(|cards| count_run(&cards, deck, combos))
             .sum();
         if score != 0f32 {
             return score;
@@ -139,65 +238,197 @@ fn count_runs(cards: &[Card]) -> f32 {
     0f32
 }
 
-fn count_flush(hand: &[Card]) -> f32 {
+fn count_flush(hand: &[Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     let suit = hand[0].suit();
-    if hand[1..].iter().all(|card| card.suit() == suit) {
-        // Small chance to get the other two cards flushed in the crib
-        if hand.len() == 2 {
-            return 11f32 / 52f32 * 10f32 / 52f32 * 4f32;
-        }
-        return 4f32;
+    if !hand[1..].iter().all(|card| card.suit() == suit) {
+        return 0f32;
     }
-    0f32
+
+    let remaining_of_suit = deck
+        .iter()
+        .filter(|card| card.suit() == suit)
+        .collect_vec()
+        .len();
+
+    // Small chance to get the other two cards flushed in the crib
+    if hand.len() == 2 {
+        let score = (remaining_of_suit as f32 / deck.len() as f32)
+            * (remaining_of_suit as f32 - 1f32)
+            / (deck.len() as f32 - 1f32)
+            * 4f32;
+        combos.push(Combo {
+            kind: ComboKind::PotentialFlush,
+            cards: hand.to_vec(),
+            score,
+        });
+        return score;
+    }
+
+    let score = 4f32 + potential_score(remaining_of_suit, deck.len(), 1);
+    combos.push(Combo {
+        kind: ComboKind::Flush,
+        cards: hand.to_vec(),
+        score,
+    });
+    score
 }
 
-fn count_nobs(hand: &[Card]) -> f32 {
-    for card in hand.iter() {
-        if card.rank() == Rank::Jack {
-            return 0.25;
-        }
-    }
-    0f32
+fn count_nobs(hand: &[Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
+    return hand
+        .iter()
+        .map(|card| {
+            if card.rank() != Rank::Jack {
+                return 0f32;
+            }
+
+            let suit = card.suit();
+            let remaining_of_suit = deck
+                .iter()
+                .filter(|card| card.suit() == suit)
+                .collect_vec()
+                .len();
+            let score = potential_score(remaining_of_suit, deck.len(), 1);
+            combos.push(Combo {
+                kind: ComboKind::PotentialNobs,
+                cards: vec![*card],
+                score,
+            });
+            score
+        })
+        .sum();
 }
 
-fn count_run(cards: &[&Card]) -> f32 {
+fn count_run(cards: &[&Card], deck: &[Card], combos: &mut Vec<Combo>) -> f32 {
     let n = cards.len() as u8;
     let start = cards[0].run_order();
 
-    if n == 2 {
-        let diff = ((start as i8) - (cards[1].run_order() as i8)).abs();
-        match diff {
-            // If two apart, roughly 1 in 13 chance for 3 points
-            2 => return 1f32 / 13f32 * 3f32,
-            // If one apart, roughly 2 in 13 chance for 3 points (but only 1 in 13 with Ace or King)
+    // bail early if any cards are off by more than 1
+    let mut offset = false;
+    if cards.iter().enumerate().any(|(i, card)| {
+        let expected = start + i as u8;
+        let actual = card.run_order();
+        if actual < expected {
+            return true;
+        }
+        match actual - expected {
             1 => {
-                let ranks = cards.iter().map(|card| card.rank()).collect_vec();
-                if ranks.contains(&Rank::Ace) || ranks.contains(&Rank::King) {
-                    return potential_score(4, 52, 3);
-                }
-                return potential_score(8, 52, 3);
+                offset = true;
+                false
             }
-            _ => return 0f32,
+            0 => {
+                if offset {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => true,
         }
+    }) {
+        return 0f32;
     }
 
-    if cards
+    let actual_ranks = cards.iter().map(|card| card.rank()).collect_vec();
+    let expected_ranks = (start..start + n)
+        .map(|run_order| rank_from_run_order(run_order).unwrap())
+        .collect_vec();
+    let missing_ranks = expected_ranks
         .iter()
-        .map(|card| card.run_order())
-        .eq(start..start + n)
-    {
-        let ranks = cards.iter().map(|card| card.rank()).collect_vec();
-        // we score n guaranteed, a card on either side nets another point, a card within the run scores another n points
-        if ranks.contains(&Rank::Ace) || ranks.contains(&Rank::King) {
-            return n as f32 + potential_score(4, 52, 1) + potential_score(n * 4, 52, n);
-        }
-        return n as f32 + potential_score(8, 52, 1) + potential_score(n * 4, 52, n);
-    }
+        .filter(|rank| !actual_ranks.contains(rank))
+        .collect_vec();
 
+    if missing_ranks.len() == 0 {
+        let end = cards.last().unwrap().run_order();
+
+        if n == 2 {
+            // potential run
+            let score;
+            if cards[0].rank() == Rank::Ace {
+                score = potential_score(
+                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                    deck.len(),
+                    3,
+                );
+            } else if cards.last().unwrap().rank() == Rank::King {
+                score = potential_score(
+                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                    deck.len(),
+                    3,
+                );
+            } else {
+                score = potential_score(
+                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len()
+                        + filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                    deck.len(),
+                    3,
+                );
+            };
+
+            combos.push(Combo {
+                kind: ComboKind::PotentialRun,
+                cards: cards.iter().map(|card| **card).collect_vec(),
+                score,
+            });
+            return score;
+        }
+
+        // complete run
+        // we score n guaranteed, a card on either side nets another point, a card within the run scores another n points
+        let same_rank = cards
+            .iter()
+            .map(|card| filter_by_rank(deck, card.rank()).len())
+            .sum();
+        let score;
+        if cards[0].rank() == Rank::Ace {
+            score = n as f32
+                + potential_score(same_rank, deck.len(), n)
+                + potential_score(
+                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                    deck.len(),
+                    1,
+                );
+        } else if cards.last().unwrap().rank() == Rank::King {
+            score = n as f32
+                + potential_score(same_rank, deck.len(), n)
+                + potential_score(
+                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                    deck.len(),
+                    1,
+                );
+        } else {
+            score = n as f32
+                + potential_score(same_rank, deck.len(), n)
+                + potential_score(
+                    filter_by_rank(deck, rank_from_run_order(start - 1).unwrap()).len(),
+                    deck.len(),
+                    1,
+                )
+                + potential_score(
+                    filter_by_rank(deck, rank_from_run_order(end + 1).unwrap()).len(),
+                    deck.len(),
+                    1,
+                );
+        };
+
+        combos.push(Combo {
+            kind: ComboKind::Run,
+            cards: cards.iter().map(|card| **card).collect_vec(),
+            score,
+        });
+        return score;
+    } else if missing_ranks.len() == 1 {
+        let score = potential_score(filter_by_rank(deck, *missing_ranks[0]).len(), deck.len(), n);
+        combos.push(Combo {
+            kind: ComboKind::PotentialRun,
+            cards: cards.iter().map(|card| **card).collect_vec(),
+            score,
+        });
+        return score;
+    }
     0f32
 }
 
-fn potential_score(n_card_needed: u8, n_card_remaining: u8, potential_score: u8) -> f32 {
+fn potential_score(n_card_needed: usize, n_card_remaining: usize, potential_score: u8) -> f32 {
     n_card_needed as f32 / n_card_remaining as f32 * potential_score as f32
 }
 
@@ -247,4 +478,14 @@ fn select_play(hand: Vec<Card>, played: Vec<Card>, count: u8) -> Card {
     results.sort_by(|(_, a), (_, b)| b.cmp(a));
 
     results[0].0.to_owned()
+}
+
+fn filter_by_count(deck: &[Card], count: u8) -> Vec<&Card> {
+    deck.iter()
+        .filter(|card| card.count_value() == count)
+        .collect_vec()
+}
+
+fn filter_by_rank(deck: &[Card], rank: Rank) -> Vec<&Card> {
+    deck.iter().filter(|card| card.rank() == rank).collect_vec()
 }

@@ -165,3 +165,22 @@ pub enum Rank {
 
 #[derive(Debug)]
 pub struct InsufficientCardsError;
+
+pub fn rank_from_run_order(run_order: u8) -> Option<Rank> {
+    match run_order {
+        0 => Some(Rank::Ace),
+        1 => Some(Rank::Two),
+        2 => Some(Rank::Three),
+        3 => Some(Rank::Four),
+        4 => Some(Rank::Five),
+        5 => Some(Rank::Six),
+        6 => Some(Rank::Seven),
+        7 => Some(Rank::Eight),
+        8 => Some(Rank::Nine),
+        9 => Some(Rank::Ten),
+        10 => Some(Rank::Jack),
+        11 => Some(Rank::Queen),
+        12 => Some(Rank::King),
+        _ => None,
+    }
+}
