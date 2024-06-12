@@ -6,7 +6,7 @@ use inquire::{list_option::ListOption, validator::Validation, InquireError, Mult
 use itertools::Itertools;
 use std::sync::mpsc::{Receiver, SyncSender};
 
-pub fn launch_human(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<GameAction>) {
+pub fn launch_cli(event_receiver: Receiver<GameEvent>, action_sender: SyncSender<GameAction>) {
     loop {
         let event = event_receiver.recv();
         match event {
